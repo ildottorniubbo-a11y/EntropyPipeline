@@ -214,12 +214,17 @@ Complexity, Maurer's Universal Statistical Test, Template Matching (×2), Random
 Ad ogni caricamento della pagina, un pannello dedicato esegue automaticamente:
 
 - conservazione di massa del Peres Extractor su input casuali;
-- coerenza del Toeplitz hashing contro una seconda implementazione scritta con un percorso
-di codice indipendente (diagonali esplicite, non la stessa formula confrontata con se
-stessa);
+- confronto del Toeplitz hashing con una seconda funzione di calcolo
+(`toeplitzReferenceCheck()`). **Attenzione:** le due funzioni usano la stessa espressione di
+indice `seed[i-j+n-1]`, quindi il confronto non è indipendente e non può fallire. È un
+limite noto, non una verifica: vedi la issue #3 e la PR #8, che lo sostituisce con un
+secondo calcolo per spostamento, più la prova che il confronto è sensibile;
 - vettori di test ufficiali per SHA-256 e SHAKE256;
 - auto-consistenza della funzione beta incompleta (Clopper-Pearson);
-- coerenza fra i due metodi indipendenti di calcolo di erfc;
+- confronto fra i due metodi di calcolo di erfc, con tolleranza **assoluta** 0,01.
+**Attenzione:** erfc(3) vale circa 2,2e-5, quindi nella coda — dove i p-value contano — quella
+tolleranza è troppo larga perché il confronto significhi qualcosa. Limite noto, vedi la
+issue #3 e la PR #8, che lo sostituisce con il confronto contro valori noti;
 - verifica del tetto di emissione ⌊input/2⌋;
 - LRS e Collisione su un vettore di 603 bit, con i valori stampati da `ea_non_iid`;
 - Compressione su un flusso sintetico di 12000 bit, con il valore del riferimento Python
