@@ -113,7 +113,7 @@ small.note{color:var(--muted);display:block;margin-top:6px;font-size:.72rem;}
     </label>
     <button id="btnPhase2">Esegui FASE 2</button>
   </div>
-  <small class="note">Concatenazione: min-entropia ≈ somma delle sorgenti, <b>solo se sono indipendenti</b> — se il controllo di correlazione rileva MI&gt;0.05 anche la concatenazione scende al massimo invece che alla somma. XOR/Interleave: richiedono sorgenti indipendenti e restano bloccate in presenza di correlazione; la loro entropia è sempre stimata come il massimo, mai la somma. <b>Dalla v2.0.0-beta7</b> gli stimatori girano anche <b>sul flusso combinato</b> e il budget per il bound LHL è il minimo fra le due contabilità: il controllo a coppie non vede le dipendenze congiunte (tre sorgenti a, b, c=a⊕b⊕d risultano scorrelate a due a due), quindi i bit che entrano davvero nel Toeplitz vanno misurati. Su sorgenti grandi questo passaggio richiede qualche secondo.</small>
+  <small class="note">Concatenazione: min-entropia ≈ somma delle sorgenti, <b>solo se sono indipendenti</b> — se il controllo di correlazione rileva MI&gt;0.05 anche la concatenazione scende al massimo invece che alla somma. XOR/Interleave: richiedono sorgenti indipendenti e restano bloccate in presenza di correlazione; la loro entropia è sempre stimata come il massimo, mai la somma. <b>Da questa versione</b> gli stimatori girano anche <b>sul flusso combinato</b> e il budget per il bound LHL è il minimo fra le due contabilità: il controllo a coppie non vede le dipendenze congiunte (tre sorgenti a, b, c=a⊕b⊕d risultano scorrelate a due a due), quindi i bit che entrano davvero nel Toeplitz vanno misurati. Su sorgenti grandi questo passaggio richiede qualche secondo.</small>
   <div id="p2status" class="status neutral" style="margin-top:8px;">In attesa delle sorgenti…</div>
 </div>
 
@@ -143,7 +143,7 @@ small.note{color:var(--muted);display:block;margin-top:6px;font-size:.72rem;}
   <small class="note">Margine = 2×k per ε=2⁻ᵏ. Sotto lo standard (2⁻⁸⁰) è richiesta conferma esplicita una sola volta per sessione — vedi SECURITY-NOTES.md.</small>
   <label style="font-size:.78rem;color:var(--muted);margin-top:8px;">Seed Toeplitz — override manuale (opzionale, hex o binario, lunghezza esatta m+n-1). Vuoto = auto-generato (timestamp CPU + CSPRNG, espanso via SHA-256):</label>
   <textarea id="seedInput" placeholder="vuoto = seed auto-generato"></textarea>
-  <small class="note">Il Leftover Hash Lemma garantisce l'uscita vicina all'uniforme <b>in media su un seme estratto uniformemente</b>: un seme scelto a mano non gode di quella garanzia. Dalla v2.0.0-beta7 un seme manuale costante, periodico o con min-entropia sotto 0,3 viene <b>rifiutato</b> (un seme di soli zeri produceva un'uscita tutta a zero, e dopo il doppio SHA-256 un valore dall'aria casuale ma pubblicamente noto). Usalo solo per riprodurre una sessione, mai per generare una chiave nuova.</small>
+  <small class="note">Il Leftover Hash Lemma garantisce l'uscita vicina all'uniforme <b>in media su un seme estratto uniformemente</b>: un seme scelto a mano non gode di quella garanzia. Da questa versione un seme manuale costante, periodico o con min-entropia sotto 0,3 viene <b>rifiutato</b> (un seme di soli zeri produceva un'uscita tutta a zero, e dopo il doppio SHA-256 un valore dall'aria casuale ma pubblicamente noto). Usalo solo per riprodurre una sessione, mai per generare una chiave nuova.</small>
   <div id="p4status" class="status neutral" style="margin-top:8px;">In attesa della Fase 3…</div>
   <div class="row" style="margin-top:8px;">
     <div style="flex:1;min-width:220px;">
@@ -987,7 +987,7 @@ function toeplitzHash(x, seed, m){
    successiva per spostamento a destra di una posizione, inserendo in testa il bit nuovo
    del seme. Se l'indicizzazione diretta di toeplitzHash() fosse sbagliata, o i dati
    venissero corrotti fra i due calcoli, i risultati divergerebbero. Usata nell'autotest e,
-   dalla v2.0.0-beta7, anche a runtime in Fase 4 sull'output vero. */
+   da questa versione, anche a runtime in Fase 4 sull'output vero. */
 function toeplitzHashByShift(x, seed, m){
   const n = x.length;
   if(seed.length !== m+n-1) throw new Error("Seed length mismatch");
@@ -1721,15 +1721,16 @@ document.getElementById('btnFinal').addEventListener('click', async ()=>{
   const bits = bitsFromBytes(h2);
   // [FIX] Principio 1 di SECURITY-NOTES.md, "mai inventare bit". Il doppio SHA-256
   // restituisce sempre 256 bit di LUNGHEZZA, ma la forza di sicurezza non supera gli m
-  // bit emessi dalla Fase 4 — e il tetto ⌊input/2⌋ può averli ridotti in silenzio
+  // bit emessi dalla Fase 4. Il tetto ⌊input/2⌋ segnala già la riduzione nel messaggio di
+  // Fase 4 (capNote), ma la casella dell'output finale dichiarava comunque 256 bit
   // rispetto al valore chiesto dall'utente. L'etichetta "Binario (256 bit)" era fissa e
   // suggeriva una chiave da 256 bit anche quando l'entropia disponibile era molto meno.
   const strength = state.m_out;
   document.getElementById('finalArea').innerHTML =
-    `<div class="final-box"><span class="lbl">Binario (lunghezza 256 bit — forza di sicurezza ${strength} bit)</span>${bits.join('')}<br><br>
+    `<div class="final-box"><span class="lbl">Binario (lunghezza 256 bit — forza di sicurezza al più ${strength} bit)</span>${bits.join('')}<br><br>
      <span class="lbl">Esadecimale</span>${bytesToHex(h2)}</div>` +
     (strength < 256
-      ? `<div class="status warn">⚠ L'uscita è lunga 256 bit ma porta al massimo ${strength} bit di entropia: la Fase 4 ha emesso ${strength} bit. Non dichiararla né usarla come una chiave da 256 bit.</div>`
+      ? `<div class="status warn">⚠ L'uscita è lunga 256 bit ma porta al più ${strength} bit di entropia: la Fase 4 ha emesso ${strength} bit. Non dichiararla né usarla come una chiave da 256 bit.</div>`
       : '');
   log('Output finale (doppio SHA-256) calcolato');
 });

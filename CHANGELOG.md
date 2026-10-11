@@ -2,10 +2,12 @@
 
 ## Non ancora rilasciato — correzioni di conformità e prestazioni
 
-Nessuna di queste modifiche cambia il bound LHL né la contabilità dell'entropia. Tre sono
-correzioni di conformità alla norma, due di prestazioni, una di etichetta. La versione nel
-titolo della pagina non è stata toccata: al rilascio va aggiornata insieme agli hash qui
-sotto.
+Due serie di modifiche, descritte separatamente qui sotto. **La prima** (conformità e
+prestazioni) non cambia il bound LHL né la contabilità dell'entropia: sono tre correzioni di
+conformità alla norma, due di prestazioni, una di etichetta. **La seconda** (validazione del
+seme e del flusso combinato) la contabilità invece la cambia, ed è dichiarato nella sua
+sezione. La versione nel titolo della pagina non è stata toccata: al rilascio va aggiornata
+insieme agli hash qui sotto.
 
 **Il problema, misurato.**
 - `longestRunOnes()` calcolava il p-value come `exp(-chi2/2)`, cioè `igamc(1, chi2/2)`: due
@@ -28,7 +30,9 @@ sotto.
   sorgente da 1 Mbit) sono ~3900 iterazioni e ~250 MB di copie inutili.
 - L'etichetta dell'output finale era la stringa fissa «Binario (256 bit)». Il doppio
   SHA-256 restituisce sempre 256 bit di *lunghezza*, ma la forza di sicurezza non supera
-  gli `m` bit emessi dalla Fase 4 — e il tetto ⌊input/2⌋ può averli ridotti in silenzio.
+  gli `m` bit emessi dalla Fase 4. La riduzione operata dal tetto ⌊input/2⌋ è già segnalata
+  dal messaggio di Fase 4 (`capNote`); quello che mancava era dirlo anche accanto all'output
+  finale, dove la casella dichiarava comunque 256 bit.
   Con `m` basso la casella dichiarava comunque 256 bit: contrario al Principio 1 di
   `SECURITY-NOTES.md` («mai inventare bit»).
 
@@ -156,7 +160,7 @@ altrettanti percorsi per arrivare a una chiave senza entropia.
   in Node, di piu' nel browser. Il doppio prodotto Toeplitz aggiunge 573 ms su 1 Mbit
   (444 ms il calcolo diretto). E' il prezzo della correttezza su questo punto, e rende il
   Web Worker piu' necessario di prima.
-- SHA-256 del blocco `<script id="core-script">` dopo questa seconda serie: `6edd40f4ac6c31e5c97c51c109325e4a123d42f4e500fc4309410b04e808606e`. Sostituisce il valore indicato sopra per la prima serie: e' questo il numero che il pannello Integrita' mostra al caricamento.
+- SHA-256 del blocco `<script id="core-script">` dopo questa seconda serie: `74559f5fa517d83a26a1aeec23f61f9f9861c6d18315e101383ae619f26348e4`. Sostituisce il valore indicato sopra per la prima serie: e' questo il numero che il pannello Integrita' mostra al caricamento.
 
 ## v2.0.0-beta6 (2026-10-02) — SHA-256: 585df8012ce93ef78d847003788f954b5405e46ad893b6f77bdd49df73da0f1b
 
