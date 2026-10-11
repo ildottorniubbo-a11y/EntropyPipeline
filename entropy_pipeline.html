@@ -1558,15 +1558,15 @@ document.getElementById('btnFinal').addEventListener('click', async ()=>{
   const bits = bitsFromBytes(h2);
   // [FIX] Principio 1 di SECURITY-NOTES.md, "mai inventare bit". Il doppio SHA-256
   // restituisce sempre 256 bit di LUNGHEZZA, ma la forza di sicurezza non supera gli m
-  // bit emessi dalla Fase 4 — e il tetto ⌊input/2⌋ può averli ridotti in silenzio
-  // rispetto al valore chiesto dall'utente. L'etichetta "Binario (256 bit)" era fissa e
-  // suggeriva una chiave da 256 bit anche quando l'entropia disponibile era molto meno.
+  // bit emessi dalla Fase 4. Il tetto ⌊input/2⌋ segnala già la riduzione nel messaggio di
+  // Fase 4 (capNote); quello che mancava era dirlo anche qui, dove l'etichetta fissa
+  // "Binario (256 bit)" suggeriva una chiave da 256 bit anche con m molto più piccolo.
   const strength = state.m_out;
   document.getElementById('finalArea').innerHTML =
-    `<div class="final-box"><span class="lbl">Binario (lunghezza 256 bit — forza di sicurezza ${strength} bit)</span>${bits.join('')}<br><br>
+    `<div class="final-box"><span class="lbl">Binario (lunghezza 256 bit — forza di sicurezza al più ${strength} bit)</span>${bits.join('')}<br><br>
      <span class="lbl">Esadecimale</span>${bytesToHex(h2)}</div>` +
     (strength < 256
-      ? `<div class="status warn">⚠ L'uscita è lunga 256 bit ma porta al massimo ${strength} bit di entropia: la Fase 4 ha emesso ${strength} bit. Non dichiararla né usarla come una chiave da 256 bit.</div>`
+      ? `<div class="status warn">⚠ L'uscita è lunga 256 bit ma porta al più ${strength} bit di entropia: la Fase 4 ha emesso ${strength} bit. Non dichiararla né usarla come una chiave da 256 bit.</div>`
       : '');
   log('Output finale (doppio SHA-256) calcolato');
 });

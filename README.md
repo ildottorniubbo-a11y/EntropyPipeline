@@ -224,7 +224,18 @@ stessa);
 - LRS e Collisione su un vettore di 603 bit, con i valori stampati da `ea_non_iid`;
 - Compressione su un flusso sintetico di 12000 bit, con il valore del riferimento Python
   (a sua volta validato contro `ea_non_iid`);
-- sequenza costante e periodica: H_min deve risultare circa 0.
+- sequenza costante e periodica: H_min deve risultare circa 0;
+- p-value del Longest Run contro due valori della tavola del chi-quadro a 3 gradi di
+libertà (7,8147 → 0,05 e 11,3449 → 0,01);
+- equivalenza del conteggio t-Tuple con chiavi numeriche contro un'implementazione di
+riferimento a stringhe, su quattro flussi (casuale, alternato, periodo 7, costante) e 32
+lunghezze di tupla, cioè 128 confronti;
+- espansione del seme Toeplitz in modalità contatore contro un ricalcolo indipendente
+blocco per blocco, su un vettore noto, e lunghezza esatta non arrotondata al byte;
+- finestra predefinita dell'Adaptive Proportion Test a 1024 campioni, come prescrive
+SP 800-90B §4.4.2 per le sorgenti binarie.
+
+In totale 17 verifiche (erano 11 nella v2.0.0-beta6).
 
 Se uno di questi autotest fallisse, significherebbe una regressione nel codice: non
 fidarsi dei risultati della pipeline finché non è risolto. La verifica matematica dei

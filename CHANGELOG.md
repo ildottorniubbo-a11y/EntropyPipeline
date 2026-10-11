@@ -28,7 +28,9 @@ sotto.
   sorgente da 1 Mbit) sono ~3900 iterazioni e ~250 MB di copie inutili.
 - L'etichetta dell'output finale era la stringa fissa «Binario (256 bit)». Il doppio
   SHA-256 restituisce sempre 256 bit di *lunghezza*, ma la forza di sicurezza non supera
-  gli `m` bit emessi dalla Fase 4 — e il tetto ⌊input/2⌋ può averli ridotti in silenzio.
+  gli `m` bit emessi dalla Fase 4. La riduzione operata dal tetto ⌊input/2⌋ è già segnalata
+  dal messaggio di Fase 4 (`capNote`); quello che mancava era dirlo anche accanto
+  all'output finale, dove la casella dichiarava comunque 256 bit.
   Con `m` basso la casella dichiarava comunque 256 bit: contrario al Principio 1 di
   `SECURITY-NOTES.md` («mai inventare bit»).
 
@@ -39,7 +41,7 @@ sotto.
   percorso a stringa oltre (la chiave numerica non è più esatta sopra 2^53).
   Nuova `sha256CounterExpand()`, estratta da `deriveSeedFromCpuTimestamp()` con buffer
   preallocato: ora è verificabile con un vettore noto, prima era inline e non testabile.
-  Output finale: etichetta «lunghezza 256 bit — forza di sicurezza *m* bit», più un
+  Output finale: etichetta «lunghezza 256 bit — forza di sicurezza al più *m* bit», più un
   avviso esplicito quando *m* < 256. Corretto il plurale «sorgentei» in Fase 2.
 - Sei autotest nuovi (**17 in totale**): due valori della tavola del chi-quadro a 3 gradi
   di libertà (7,8147→0,05 e 11,3449→0,01); equivalenza del conteggio t-Tuple numerico
@@ -51,8 +53,10 @@ sotto.
 **Verifica.**
 - Autotest all'avvio: 17 su 17.
 - Equivalenza t-Tuple: il nuovo percorso numerico e quello a stringa danno conteggi
-  identici su 160 confronti (4 flussi × 40 lunghezze), inclusi i casi periodici e
-  costanti, e `tTupleHmin()` restituisce gli stessi valori di prima del cambio.
+  identici sui 128 confronti dell'autotest (4 flussi × 32 lunghezze), inclusi i casi
+  periodici e costanti. La stessa verifica, ripetuta fuori dalla pagina fino a L=40
+  (160 confronti), dà lo stesso esito: sono due misure distinte e vanno citate come
+  tali. `tTupleHmin()` restituisce gli stessi valori di prima del cambio.
 - Prestazioni su 1.000.000 di bit: `tTupleHmin()` da **7730 ms a 40 ms**;
   `combinedHmin()` nel complesso da **13,4 s a 6,7 s**. Il resto ora è LRS (4,2 s) e
   Compressione (2,4 s).
@@ -60,7 +64,7 @@ sotto.
 - Pipeline completa (Fasi 1→5, output finale, SHAKE256, confronto XOR-LFSR) eseguita su
   due sorgenti CSPRNG indipendenti da 40.000 bit: nessuna regressione, l'avviso di forza
   di sicurezza compare quando *m* < 256 e non compare quando *m* = 256.
-- SHA-256 del blocco `<script id="core-script">`: `8b4550190c6607c9a0e18fc9f97e672bf7d4c34fcf91419425db13aedea554c5`
+- SHA-256 del blocco `<script id="core-script">`: `ab1985c08f90d3ee1b8764a12d73b250888c6535b2d4e96db5fe3913f7f822c4`
   (era `db96d801827745654db23d51ff467913449d4a4ae8bd7bc42ec3f9b63a185528`). È il valore che
   il pannello «Integrità» mostra al caricamento. Le voci storiche e il README vanno
   aggiornati con questo valore al momento del rilascio.
