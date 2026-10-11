@@ -55,8 +55,10 @@ insieme agli hash qui sotto.
 **Verifica.**
 - Autotest all'avvio: 17 su 17.
 - Equivalenza t-Tuple: il nuovo percorso numerico e quello a stringa danno conteggi
-  identici su 160 confronti (4 flussi × 40 lunghezze), inclusi i casi periodici e
-  costanti, e `tTupleHmin()` restituisce gli stessi valori di prima del cambio.
+  identici sui 128 confronti dell'autotest (4 flussi × 32 lunghezze), inclusi i casi
+  periodici e costanti. La stessa verifica, ripetuta fuori dalla pagina fino a L=40
+  (160 confronti), dà lo stesso esito: sono due misure distinte e vanno citate come
+  tali. `tTupleHmin()` restituisce gli stessi valori di prima del cambio.
 - Prestazioni su 1.000.000 di bit: `tTupleHmin()` da **7730 ms a 40 ms**;
   `combinedHmin()` nel complesso da **13,4 s a 6,7 s**. Il resto ora è LRS (4,2 s) e
   Compressione (2,4 s).
