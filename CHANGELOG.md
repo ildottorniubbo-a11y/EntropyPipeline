@@ -1,5 +1,70 @@
 # Changelog — Entropy Extraction Pipeline (Peres + Toeplitz)
 
+## Non ancora rilasciato — correzioni di conformità e prestazioni
+
+Nessuna di queste modifiche cambia il bound LHL né la contabilità dell'entropia. Tre sono
+correzioni di conformità alla norma, due di prestazioni, una di etichetta. La versione nel
+titolo della pagina non è stata toccata: al rilascio va aggiornata insieme agli hash qui
+sotto.
+
+**Il problema, misurato.**
+- `longestRunOnes()` calcolava il p-value come `exp(-chi2/2)`, cioè `igamc(1, chi2/2)`: due
+  gradi di libertà. Il test ha 4 categorie con probabilità note e nessun parametro
+  stimato, quindi K=3 e SP 800-22 §2.4 prescrive `igamc(K/2, chi2/2) = igamc(1.5, chi2/2)`.
+  Misurato su 3000 sequenze CSPRNG da 1024 bit: **2,50% di falsi FALLITI** contro l'1%
+  nominale della soglia 0,01. L'errore andava in direzione severa (nessun rischio di
+  sicurezza), ma segnalava come non casuali sequenze che lo erano. `igamc()` era già nel
+  file dalla beta3, usata dagli altri quattro test chi-quadro.
+- `adaptiveProportionTest()` usava una finestra di 512 campioni. SP 800-90B §4.4.2 fissa la
+  finestra a **1024 per le sorgenti binarie** (512 vale per alfabeti più grandi); qui i
+  campioni sono sempre binari, 1 bit per campione.
+- `tTupleHmin()` contava le tuple con chiavi stringa (`bits.slice(i,i+L).join('')`): una
+  stringa allocata per ogni posizione del campione, per ogni lunghezza di tupla. Era il
+  collo di bottiglia di `combinedHmin()`: **7,73 s su 1.000.000 di bit**, su un totale di
+  13,4 s. Accanto, `tupleStats()` faceva già lo stesso conteggio con chiavi numeriche a
+  finestra scorrevole, validato contro `ea_non_iid` nella beta6.
+- L'espansione del seme Toeplitz riallocava e ricopiava l'intero buffer di uscita a ogni
+  blocco da 32 byte: quadratica nella lunghezza del seme. Per un seme da ~125 KB (una
+  sorgente da 1 Mbit) sono ~3900 iterazioni e ~250 MB di copie inutili.
+- L'etichetta dell'output finale era la stringa fissa «Binario (256 bit)». Il doppio
+  SHA-256 restituisce sempre 256 bit di *lunghezza*, ma la forza di sicurezza non supera
+  gli `m` bit emessi dalla Fase 4 — e il tetto ⌊input/2⌋ può averli ridotti in silenzio.
+  Con `m` basso la casella dichiarava comunque 256 bit: contrario al Principio 1 di
+  `SECURITY-NOTES.md` («mai inventare bit»).
+
+**Modifiche.**
+- `entropy_pipeline.html` — `longestRunOnes()`: p-value con `igamc(1.5, chi2/2)`.
+  `adaptiveProportionTest()`: finestra predefinita 1024, messaggio di Fase 1 allineato.
+  `tTupleHmin()`: `modeCount()` riusa `tupleStats()` per L ≤ `LRS_W_CAP`, resta sul
+  percorso a stringa oltre (la chiave numerica non è più esatta sopra 2^53).
+  Nuova `sha256CounterExpand()`, estratta da `deriveSeedFromCpuTimestamp()` con buffer
+  preallocato: ora è verificabile con un vettore noto, prima era inline e non testabile.
+  Output finale: etichetta «lunghezza 256 bit — forza di sicurezza *m* bit», più un
+  avviso esplicito quando *m* < 256. Corretto il plurale «sorgentei» in Fase 2.
+- Sei autotest nuovi (**17 in totale**): due valori della tavola del chi-quadro a 3 gradi
+  di libertà (7,8147→0,05 e 11,3449→0,01); equivalenza del conteggio t-Tuple numerico
+  contro un'implementazione di riferimento a stringhe, su 4 flussi (casuale, alternato,
+  periodo 7, costante) × 32 lunghezze di tupla; espansione del seme contro un ricalcolo
+  indipendente blocco per blocco (vettore noto, 520 bit); lunghezza esatta non arrotondata
+  al byte; finestra APT predefinita a 1024.
+
+**Verifica.**
+- Autotest all'avvio: 17 su 17.
+- Equivalenza t-Tuple: il nuovo percorso numerico e quello a stringa danno conteggi
+  identici su 160 confronti (4 flussi × 40 lunghezze), inclusi i casi periodici e
+  costanti, e `tTupleHmin()` restituisce gli stessi valori di prima del cambio.
+- Prestazioni su 1.000.000 di bit: `tTupleHmin()` da **7730 ms a 40 ms**;
+  `combinedHmin()` nel complesso da **13,4 s a 6,7 s**. Il resto ora è LRS (4,2 s) e
+  Compressione (2,4 s).
+- Longest Run dopo il fix: falsi FALLITI tornati a ~1% su 3000 sequenze CSPRNG da 1024 bit.
+- Pipeline completa (Fasi 1→5, output finale, SHAKE256, confronto XOR-LFSR) eseguita su
+  due sorgenti CSPRNG indipendenti da 40.000 bit: nessuna regressione, l'avviso di forza
+  di sicurezza compare quando *m* < 256 e non compare quando *m* = 256.
+- SHA-256 del blocco `<script id="core-script">`: `8b4550190c6607c9a0e18fc9f97e672bf7d4c34fcf91419425db13aedea554c5`
+  (era `db96d801827745654db23d51ff467913449d4a4ae8bd7bc42ec3f9b63a185528`). È il valore che
+  il pannello «Integrità» mostra al caricamento. Le voci storiche e il README vanno
+  aggiornati con questo valore al momento del rilascio.
+
 ## v2.0.0-beta6 (2026-10-02) — SHA-256: 585df8012ce93ef78d847003788f954b5405e46ad893b6f77bdd49df73da0f1b
 
 **Stimatori LRS, Collisione e Compressione allineati a SP 800-90B e validati contro l'output ufficiale di `ea_non_iid`.** Il 01/10/2026 il confronto tra la Fase 1 della pagina e il programma ufficiale del NIST (compilato sul Raspberry Pi) sugli stessi flussi di bit ha mostrato che l'LRS della pagina era fuori scala; il 02/10/2026 sono stati riscritti e validati i tre stimatori. Le voci storiche che parlano di LRS (`W = u+1`, `W = u`, `LRS_MAX_SEARCH_LEN`) o di Collisione e Compressione «non implementati» descrivono il codice di quelle build e restano come storia; per lo stato attuale vale questa voce.

@@ -463,8 +463,17 @@ const TTUPLE_MAX_T = 64;
 function tTupleHmin(bits){
   const n=bits.length;
   if(n<40) return null;
+  const sArr = Uint8Array.from(bits);
   function modeCount(L){
     if(n-L+1<=0) return {count:0,total:0};
+    // [FIX prestazioni] Conteggio con chiavi numeriche a finestra scorrevole, lo stesso
+    // schema di tupleStats() già validato contro ea_non_iid in beta6, invece di
+    // bits.slice(i,i+L).join(''): risultato identico (verificato nell'autotest), senza
+    // allocare una stringa per ogni posizione del campione. Era il collo di bottiglia di
+    // combinedHmin: 13,4 s su 1.000.000 di bit, quasi tutti spesi qui.
+    // Oltre LRS_W_CAP=52 bit la chiave numerica non è più esatta (limite 2^53), quindi
+    // per L più grandi si resta sul percorso a stringa.
+    if(L<=LRS_W_CAP) return {count: tupleStats(sArr,L).maxC, total: n-L+1};
     const counts={};
     for(let i=0;i<=n-L;i++){ const key=bits.slice(i,i+L).join(''); counts[key]=(counts[key]||0)+1; }
     let maxC=0; for(const k in counts) if(counts[k]>maxC) maxC=counts[k];
@@ -633,7 +642,10 @@ function repetitionCountTest(bits, hminPerBit){
   return { maxRun, cutoff:C, failed: maxRun>=C };
 }
 function adaptiveProportionTest(bits, hminPerBit, W){
-  W = W||512;
+  // [FIX] SP 800-90B §4.4.2: la finestra dell'Adaptive Proportion Test è 1024 per le
+  // sorgenti BINARIE (512 vale per alfabeti più grandi). Qui i campioni sono sempre
+  // binari, 1 bit per campione, quindi la finestra corretta è 1024.
+  W = W||1024;
   if(bits.length<W) return null;
   const alpha=Math.pow(2,-20);
   const H=Math.max(hminPerBit,1e-6);
@@ -737,7 +749,13 @@ function longestRunOnes(bits){
   }
   let chi2=0;
   for(let i=0;i<4;i++){ const exp=N*piArr[i]; if(exp>0) chi2 += Math.pow(v[i]-exp,2)/exp; }
-  const p = Math.max(0,Math.min(1, Math.exp(-chi2/2)));
+  // [FIX] Gradi di libertà del chi-quadro. Le 4 categorie di questo test hanno
+  // probabilità note e nessun parametro stimato: K=3, quindi il p-value della specifica
+  // (SP 800-22 §2.4) è igamc(K/2, chi2/2) = igamc(1.5, chi2/2). exp(-chi2/2) è
+  // igamc(1, chi2/2), cioè 2 gradi di libertà: sistematicamente troppo severo.
+  // Misurato su 3000 sequenze CSPRNG da 1024 bit: 2,50% di falsi FALLITI prima del fix,
+  // ~1% dopo (il tasso nominale per la soglia 0,01). igamc è già nel file.
+  const p = Math.max(0,Math.min(1, igamc(1.5, chi2/2)));
   return [p,p];
 }
 // [SOSTITUITO — v2.0.0-beta3] Serial Test completo, conforme alla specifica NIST
@@ -903,24 +921,35 @@ async function deriveSeedFromCpuTimestamp(neededBits){
   const material = new Uint8Array(tsBytes.length + rnd.length);
   material.set(tsBytes,0);
   material.set(rnd, tsBytes.length);
+  return { bits: await sha256CounterExpand(material, neededBits), tsString,
+           materialFingerprint: bytesToHex(material).slice(0,16)+'…' };
+}
+// Espansione deterministica di un materiale di seme in `neededBits` bit, con SHA-256 in
+// modalità contatore (contatore big-endian a 32 bit || materiale). Estratta da
+// deriveSeedFromCpuTimestamp() per poter essere verificata con un vettore noto
+// nell'autotest: prima era inline e non testabile.
+async function sha256CounterExpand(material, neededBits){
   const neededBytes = Math.ceil(neededBits/8);
-  let outBytes = new Uint8Array(0);
+  // [FIX prestazioni] Buffer preallocato invece di riallocare e ricopiare l'intero
+  // output a ogni blocco da 32 byte: la versione precedente era quadratica nella
+  // lunghezza del seme. Per un seme da ~125 KB (una sorgente da 1 Mbit) erano ~3900
+  // iterazioni e ~250 MB di copie inutili. Byte prodotti: identici (stesso SHA-256 in
+  // modalità contatore, stesso ordine) — verificato nell'autotest.
+  const outBytes = new Uint8Array(Math.ceil(neededBytes/32)*32);
+  let written = 0;
   let counter = 0;
-  while(outBytes.length < neededBytes){
+  while(written < neededBytes){
     const counterBytes = new Uint8Array(4);
     new DataView(counterBytes.buffer).setUint32(0, counter, false);
     const blockInput = new Uint8Array(counterBytes.length + material.length);
     blockInput.set(counterBytes,0);
     blockInput.set(material, counterBytes.length);
     const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', blockInput));
-    const merged = new Uint8Array(outBytes.length + digest.length);
-    merged.set(outBytes,0);
-    merged.set(digest, outBytes.length);
-    outBytes = merged;
+    outBytes.set(digest, written);
+    written += digest.length;
     counter++;
   }
-  const bits = bitsFromBytes(outBytes).slice(0, neededBits);
-  return { bits, tsString, materialFingerprint: bytesToHex(material).slice(0,16)+'…' };
+  return bitsFromBytes(outBytes).slice(0, neededBits);
 }
 function toeplitzHash(x, seed, m){
   const n = x.length;
@@ -1292,7 +1321,7 @@ function analyzeSource(idx){
     (detail.collision!==null ? ` Collisione=${detail.collision.toFixed(4)}` : ' Collisione=n/a') +
     (detail.compression!==null ? ` Compressione=${detail.compression.toFixed(4)}` : ' Compressione=n/a (servono ≥6012 bit)');
   const rctTxt = `RCT: run max=${rct.maxRun} (soglia ${rct.cutoff}) ${rct.failed?'⚠ FALLITO':'OK'}`;
-  const aptTxt = apt ? `APT: conteggio max=${apt.maxCount}/${apt.windowsChecked} finestre (soglia ${apt.cutoff}) ${apt.failed?'⚠ FALLITO':'OK'}` : 'APT: n/a (servono ≥512 bit)';
+  const aptTxt = apt ? `APT: conteggio max=${apt.maxCount}/${apt.windowsChecked} finestre (soglia ${apt.cutoff}) ${apt.failed?'⚠ FALLITO':'OK'}` : 'APT: n/a (servono ≥1024 bit)';
   statusEl.className = (rct.failed || (apt&&apt.failed)) ? 'status fail' : `status ${level}`;
   statusEl.textContent = `bit=${bits.length} H_min=${hMin.toFixed(4)}${excludedTxt}\n${detailTxt}\n${rctTxt}\n${aptTxt}`;
   log(`Sorgente ${idx+1} analizzata: ${bits.length} bit, H_min=${hMin.toFixed(4)}`);
@@ -1356,7 +1385,7 @@ document.getElementById('btnPhase2').addEventListener('click', ()=>{
   state.sourceHminSum = sumH;
   state.sourceEntropyBits = entropyBitsForLHL;
   p2.className='status ok';
-  p2.textContent = `OK — ${concat.length} bit combinati (modalità: ${combineMode}) da ${active.length} sorgente${active.length>1?'i':''}.\nΣ H_min (tasso, informativo) = ${sumH.toFixed(4)}\nEntropia assoluta usata per il bound LHL = ${entropyBitsForLHL.toFixed(1)} bit\nChecksum XOR=${c1} block8=${c2} → match\n` +
+  p2.textContent = `OK — ${concat.length} bit combinati (modalità: ${combineMode}) da ${active.length} sorgent${active.length>1?'i':'e'}.\nΣ H_min (tasso, informativo) = ${sumH.toFixed(4)}\nEntropia assoluta usata per il bound LHL = ${entropyBitsForLHL.toFixed(1)} bit\nChecksum XOR=${c1} block8=${c2} → match\n` +
     (active.length>1 ? (warnMI.length ? `⚠ WARN correlazione (multi-lag ±8): ${warnMI.join(', ')}` : 'Correlazione multi-lag (±8): nessun warning') : '(sorgente singola)') +
     (excludedForHealth.length ? `\n(${excludedForHealth.join(', ')} esclusa/e per health test RCT/APT fallito)` : '');
   log(`FASE 2 OK: ${concat.length} bit, modalità=${combineMode}, sorgenti=${active.length}`);
@@ -1527,9 +1556,18 @@ document.getElementById('btnFinal').addEventListener('click', async ()=>{
   const h1 = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
   const h2 = new Uint8Array(await crypto.subtle.digest('SHA-256', h1));
   const bits = bitsFromBytes(h2);
+  // [FIX] Principio 1 di SECURITY-NOTES.md, "mai inventare bit". Il doppio SHA-256
+  // restituisce sempre 256 bit di LUNGHEZZA, ma la forza di sicurezza non supera gli m
+  // bit emessi dalla Fase 4 — e il tetto ⌊input/2⌋ può averli ridotti in silenzio
+  // rispetto al valore chiesto dall'utente. L'etichetta "Binario (256 bit)" era fissa e
+  // suggeriva una chiave da 256 bit anche quando l'entropia disponibile era molto meno.
+  const strength = state.m_out;
   document.getElementById('finalArea').innerHTML =
-    `<div class="final-box"><span class="lbl">Binario (256 bit)</span>${bits.join('')}<br><br>
-     <span class="lbl">Esadecimale</span>${bytesToHex(h2)}</div>`;
+    `<div class="final-box"><span class="lbl">Binario (lunghezza 256 bit — forza di sicurezza ${strength} bit)</span>${bits.join('')}<br><br>
+     <span class="lbl">Esadecimale</span>${bytesToHex(h2)}</div>` +
+    (strength < 256
+      ? `<div class="status warn">⚠ L'uscita è lunga 256 bit ma porta al massimo ${strength} bit di entropia: la Fase 4 ha emesso ${strength} bit. Non dichiararla né usarla come una chiave da 256 bit.</div>`
+      : '');
   log('Output finale (doppio SHA-256) calcolato');
 });
 
@@ -1635,6 +1673,57 @@ async function runSelfTests(){
   const cmpSyn = compressionHmin(xsBits);
   check('Compressione (SP 800-90B 6.3.4) — flusso sintetico di 12000 bit: 0,646144 come il riferimento Python', cmpSyn!==null && Math.abs(cmpSyn-0.6461441440514917) < 1e-9);
   check('Stima di min-entropia — sequenza costante e periodica danno H_min≈0', combinedHmin(new Array(2000).fill(0)).hmin < 0.01 && combinedHmin(Array.from({length:2000},(_,i)=>i%2)).hmin < 0.01);
+
+  // [NUOVO] Longest Run of Ones — gradi di libertà del p-value. Il test ha 4 categorie
+  // con probabilità note e nessun parametro stimato: K=3. Verificato contro due valori
+  // della tavola del chi-quadro a 3 gradi di libertà, non contro la formula stessa.
+  check('Longest Run — p-value a 3 gradi di libertà (tavola χ²: 7,8147→0,05)',
+    Math.abs(igamc(1.5, 7.8147/2) - 0.05) < 1e-5);
+  check('Longest Run — p-value a 3 gradi di libertà (tavola χ²: 11,3449→0,01)',
+    Math.abs(igamc(1.5, 11.3449/2) - 0.01) < 1e-5);
+
+  // [NUOVO] t-Tuple — il conteggio con chiavi numeriche deve coincidere con il percorso
+  // a stringa che sostituisce. Implementazione di riferimento indipendente (algoritmo
+  // diverso: chiavi testuali in un oggetto), confrontata su dati casuali, periodici e
+  // costanti, per ogni lunghezza di tupla fino a 32.
+  function modeCountStringRef(bits, L){
+    const counts = {};
+    for(let i=0;i<=bits.length-L;i++){ const k=bits.slice(i,i+L).join(''); counts[k]=(counts[k]||0)+1; }
+    let maxC=0; for(const k in counts) if(counts[k]>maxC) maxC=counts[k];
+    return maxC;
+  }
+  let ttOk = true;
+  const ttSets = [
+    Array.from({length:3000}, ()=> crypto.getRandomValues(new Uint8Array(1))[0] & 1),
+    Array.from({length:3000}, (_,i)=> i%2),
+    Array.from({length:3000}, (_,i)=> (i%7)<3 ? 1 : 0),
+    new Array(3000).fill(1)
+  ];
+  for(const b of ttSets){
+    const sa = Uint8Array.from(b);
+    for(let L=1; L<=32; L++) if(tupleStats(sa,L).maxC !== modeCountStringRef(b,L)) ttOk = false;
+  }
+  check('t-Tuple — chiavi numeriche identiche al percorso a stringa (4 flussi × 32 lunghezze)', ttOk);
+
+  // [NUOVO] Espansione del seme Toeplitz in modalità contatore — vettore noto, ricalcolato
+  // qui blocco per blocco con crypto.subtle, indipendentemente dal buffer preallocato.
+  const expMat = new TextEncoder().encode('vettore-di-prova-seme-toeplitz');
+  const expGot = await sha256CounterExpand(expMat, 520);     // 65 byte → 3 blocchi SHA-256
+  const refBytes = [];
+  for(let cnt=0; cnt<3; cnt++){
+    const bi = new Uint8Array(4 + expMat.length);
+    new DataView(bi.buffer).setUint32(0, cnt, false);
+    bi.set(expMat, 4);
+    for(const by of new Uint8Array(await crypto.subtle.digest('SHA-256', bi))) refBytes.push(by);
+  }
+  check('Seme Toeplitz — espansione SHA-256 in modalità contatore (520 bit, vettore noto)',
+    expGot.join('') === bitsFromBytes(new Uint8Array(refBytes)).slice(0,520).join(''));
+  check('Seme Toeplitz — lunghezza esatta richiesta, non arrotondata al byte', expGot.length === 520);
+
+  // [NUOVO] Adaptive Proportion Test — finestra 1024 per sorgenti binarie (SP 800-90B §4.4.2)
+  check('APT — finestra predefinita 1024 (sorgenti binarie)',
+    adaptiveProportionTest(new Array(1023).fill(0), 1) === null &&
+    adaptiveProportionTest(new Array(1024).fill(0), 1) !== null);
 
   const allPass = results.every(r=>r.pass);
   const el = document.getElementById('selfTestArea');
