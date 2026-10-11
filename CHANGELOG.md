@@ -65,6 +65,99 @@ sotto.
   il pannello «Integrità» mostra al caricamento. Le voci storiche e il README vanno
   aggiornati con questo valore al momento del rilascio.
 
+### Seconda serie — i controlli che non controllavano, e i due buchi che lasciavano aperti
+
+Le modifiche qui sotto chiudono le issue di progetto aperte insieme alla prima serie. Tre
+verifiche esistenti non potevano fallire per costruzione, e dietro due di esse c'erano
+altrettanti percorsi per arrivare a una chiave senza entropia.
+
+**Il problema, misurato.**
+- **Seme Toeplitz manuale.** Veniva controllata solo la lunghezza. Con un seme di soli zeri
+  ogni riga della matrice e' nulla e l'uscita e' m bit a zero; con un seme di soli uni ogni
+  riga e' identica e l'uscita e' la parita' dell'ingresso ripetuta. Il doppio SHA-256
+  successivo trasforma quei bit costanti in un valore dall'aria perfettamente casuale e
+  pubblicamente noto. Riprodotto: `toeplitzHash(x, seed tutto-0, 256)` restituisce 256 bit
+  a zero, e `verifyToeplitz()` dava comunque `true`.
+- **Flusso combinato mai rivalidato.** Il budget propagato al bound LHL veniva dalle stime
+  per sorgente della Fase 1, ma i bit che entrano nel Toeplitz sono quelli combinati, che
+  nessuno stimatore aveva mai guardato. Il controllo di indipendenza e' a coppie, e
+  l'indipendenza a coppie non implica quella congiunta: con `a`, `b` da CSPRNG, `d` con
+  bias 0,9 e `c = a XOR b XOR d`, le tre MI a coppie valgono 0,00003-0,00010 (soglia di
+  blocco 0,05), ogni sorgente supera il gate 0,3, lo XOR delle tre vale `d`, e il budget
+  risultava **40.226 bit contro i ~7.600 realmente presenti: 5,3 volte**.
+  Caso gemello in concatenazione: la stessa sorgente incollata due volte raddoppiava il
+  budget, perche' in modalita' concat la correlazione produceva solo un warning.
+- **`verifyToeplitz()` era una tautologia.** Confrontava `seed[i-j+offset]` con
+  `seed[(i-1)-(j-1)+offset]`: lo stesso indice scritto in due modi. Mai `false` su 5000
+  prove, `true` anche su un seme di soli zeri. Il difetto non era nell'implementazione ma
+  nell'idea: un vettore indicizzato come `seed[i-j+n-1]` *definisce* una matrice di
+  Toeplitz, quindi nessun controllo di struttura su quel vettore puo' fallire.
+- **I "due checksum indipendenti" erano la stessa funzione.** `xorChecksum()` e' la parita'
+  di tutti i bit; `block8Mod2Checksum()` e' lo XOR delle parita' dei blocchi da 8 bit, che
+  algebricamente e' di nuovo la parita' di tutti i bit. Identici su 2000 confronti: il ramo
+  `CRITICAL STOP` era irraggiungibile. In piu' il valore veniva stampato a schermo, ed e'
+  un bit di informazione sul pool grezzo.
+- **`toeplitzReferenceCheck()` non era indipendente.** Stessa espressione di indice,
+  materializzata in un array: l'autotest che la confrontava con `toeplitzHash()` non poteva
+  fallire.
+- **L'autotest non bloccava nulla.** Il README dichiara i vettori NIST "verificati prima
+  dell'uso", ma un autotest fallito coloriva soltanto il pannello di rosso: tutti i pulsanti
+  restavano attivi.
+- **`erfc` — tolleranza del confronto.** I due metodi venivano confrontati fra loro con
+  tolleranza assoluta 0,01, ma `erfc(3) = 2,2e-5`: nella coda, dove i p-value contano, il
+  test passava anche se un'implementazione avesse restituito 0.
+- **Stato stantio.** Modificare o svuotare una sorgente dopo la Fase 2 non azzerava
+  `concatBits`/`peresOut`/`finalOut` ne' disabilitava le Fasi 3-5: lo schermo descriveva le
+  sorgenti nuove mentre l'output continuava a venire dai bit vecchi.
+- **Assistente CSV.** `csvExtractLsbBits()` accettava valori scalati oltre 2^53, dove i bit
+  bassi del double sono residui dell'arrotondamento e non dati del sensore.
+
+**Modifiche.**
+- `validateSeedBits()` — nuova. Rifiuta un seme manuale costante, periodico (periodo fino a
+  32) o con min-entropia sotto `HMIN_EXCLUDE`, e avvisa quando sta sotto 0,8. Nota
+  permanente accanto al campo: il bound LHL vale in media su un seme *uniforme*.
+- Fase 2 — `combinedHmin()` gira ora **sul flusso combinato**; il budget per il bound LHL e'
+  il minimo fra la contabilita' per sorgente e quella misurata sui bit combinati, e la fase
+  si ferma se la H_min del flusso combinato scende sotto 0,3, distinguendo nel messaggio il
+  caso della sottostringa ripetuta oltre `LRS_W_CAP`. In concatenazione, se il controllo a
+  coppie segnala correlazione, il budget scende dalla somma al massimo.
+- `verifyToeplitz()` rimossa. `toeplitzReferenceCheck()` sostituita da
+  `toeplitzHashByShift()`, che costruisce la prima riga e ricava le successive per
+  spostamento senza usare l'espressione di indice; in Fase 4 i due prodotti vengono
+  calcolati entrambi **sull'output vero** e confrontati, non solo nell'autotest.
+- `xorChecksum()`/`block8Mod2Checksum()` sostituite da `onesCountDirect()` e
+  `onesCountViaBytes()`: la stessa quantita' (il numero di uni) per due algoritmi diversi,
+  confrontabili sul serio. Il valore non viene piu' mostrato.
+- `runSelfTests()` — l'esito vincola l'uso: con una verifica fallita le Fasi 1-5 sono
+  disabilitate e il pannello lo dichiara.
+- `invalidateDownstream()` — nuova, chiamata da `analyzeSource()` e `clearSource()`.
+- Fase 1 — avviso quando i campioni sono meno di 1.000.000, come prescrive SP 800-90B e
+  come gia' fa `ea-non-iid-verifica`, senza alzare la soglia d'ingresso.
+- Assistente CSV — i valori che superano 2^53 dopo la scala vengono scartati e la
+  configurazione penalizzata; avviso esplicito, nel pannello e nel riquadro dei risultati,
+  che la min-entropia misura i numeri e non la loro origine fisica.
+- `yieldToUI()` — cede il controllo al browser prima dei calcoli lunghi, cosi' il messaggio
+  di attesa viene dipinto. Palliativo, non un sostituto di un Web Worker.
+- Nove autotest nuovi (**26 in totale**): sensibilita' del confronto Toeplitz a un seme
+  alterato di un bit; coerenza e sensibilita' del doppio conteggio degli uni; i quattro casi
+  della validazione del seme; `erfc` contro valori noti (errore relativo per Numerical
+  Recipes, assoluto per Abramowitz-Stegun); H_min nulla sullo XOR di due sorgenti identiche.
+
+**Verifica.**
+- Autotest all'avvio: **26 su 26**, stabile su esecuzioni ripetute.
+- Suite di comportamento, 16 controlli su 16, con un DOM minimo in Node: percorso normale
+  completo; invalidazione dello stato a valle dopo la modifica di una sorgente; rifiuto dei
+  semi tutto-zero, tutto-uno e a periodo 2; accettazione di un seme da CSPRNG; il caso
+  `c = a XOR b XOR d` ora **bloccato** (H_min del flusso combinato 0,0000); la sorgente
+  duplicata in concatenazione ora **bloccata**.
+- **Costo, misurato in Node.** La rivalidazione del flusso combinato raddoppia abbondantemente
+  il lavoro della Fase 2: `combinedHmin()` impiega 6,1 s su 1 Mbit, 17,5 s su 2 Mbit e
+  40,9 s su 4 Mbit. Con quattro sorgenti da 1 Mbit la Fase 2 passa da istantanea a circa 40 s
+  in Node, di piu' nel browser. Il doppio prodotto Toeplitz aggiunge 573 ms su 1 Mbit
+  (444 ms il calcolo diretto). E' il prezzo della correttezza su questo punto, e rende il
+  Web Worker piu' necessario di prima.
+- SHA-256 del blocco `<script id="core-script">` dopo questa seconda serie: `6edd40f4ac6c31e5c97c51c109325e4a123d42f4e500fc4309410b04e808606e`. Sostituisce il valore indicato sopra per la prima serie: e' questo il numero che il pannello Integrita' mostra al caricamento.
+
 ## v2.0.0-beta6 (2026-10-02) — SHA-256: 585df8012ce93ef78d847003788f954b5405e46ad893b6f77bdd49df73da0f1b
 
 **Stimatori LRS, Collisione e Compressione allineati a SP 800-90B e validati contro l'output ufficiale di `ea_non_iid`.** Il 01/10/2026 il confronto tra la Fase 1 della pagina e il programma ufficiale del NIST (compilato sul Raspberry Pi) sugli stessi flussi di bit ha mostrato che l'LRS della pagina era fuori scala; il 02/10/2026 sono stati riscritti e validati i tre stimatori. Le voci storiche che parlano di LRS (`W = u+1`, `W = u`, `LRS_MAX_SEARCH_LEN`) o di Collisione e Compressione «non implementati» descrivono il codice di quelle build e restano come storia; per lo stato attuale vale questa voce.
