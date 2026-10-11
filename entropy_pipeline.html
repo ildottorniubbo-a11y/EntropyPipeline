@@ -1478,7 +1478,8 @@ document.getElementById('btnPhase2').addEventListener('click', async ()=>{
   const concat = combineSourceArrays(active.map(a=>a.bits), combineMode);
 
   p2.className='status neutral';
-  p2.textContent = `Fase 2: ${concat.length} bit combinati, rivalidazione del flusso combinato in corso... (su sorgenti grandi puo' richiedere qualche secondo)`;
+  p2.textContent = `Fase 2: ${concat.length} bit combinati, rivalidazione del flusso combinato in corso... ` +
+    (concat.length < 1000000 ? `(battery completa, 6 stimatori)` : `(battery ridotta, solo LRS: sopra il milione di bit la completa richiederebbe decine di secondi)`);
   await yieldToUI();
 
   const n1 = onesCountDirect(concat);
@@ -1498,16 +1499,47 @@ document.getElementById('btnPhase2').addEventListener('click', async ()=>{
      a, b, c = a xor b xor d (d debole) tutte le coppie risultano scorrelate, lo XOR vale d,
      e il budget risultava 5,3 volte l'entropia realmente presente. Ora gli stimatori
      girano anche sul flusso combinato e il budget e' il minimo fra le due contabilita'. */
-  const combinedEst = combinedHmin(concat);
-  const entropyBitsCombined = combinedEst.hmin * concat.length;
-  if(combinedEst.hmin < HMIN_EXCLUDE){
+  /* [COMPROMESSO concordato nella #8] La rivalidazione completa costa: combinedHmin() su
+     4 Mbit impiega circa 47 s. Sotto la soglia si esegue la battery completa; sopra, il
+     solo LRS, che e' lo stimatore che intercetta ripetizioni e dipendenze fra sorgenti
+     (verificato: su una sorgente duplicata e su due sorgenti identiche in XOR l'LRS da' 0
+     con lrsCapped=true, mentre su un flusso sano da' 0,83 senza cap).
+     Il budget resta comunque il MINIMO fra la contabilita' per sorgente e quella sul
+     flusso combinato: una battery ridotta puo' solo far valere di meno il vincolo nuovo,
+     non alzare mai il budget sopra quello che la beta6 avrebbe dato da sola.
+     NOTA: la soglia vale SOLO qui, non per le stime per sorgente della Fase 1. Li' il
+     minimo e' quasi sempre dato dalla Compressione, non dall'LRS: misurato su quattro
+     flussi, usare il solo LRS alzerebbe H_min del 26-43% e quindi gonfierebbe il budget
+     (xorshift 0,7225 -> 0,9825; CSPRNG 0,7121 -> 0,9835). Sarebbe una regressione di
+     sicurezza, non un'ottimizzazione. */
+  const BATTERY_COMPLETA_MAX_BIT = 1000000;
+  const batteryCompleta = concat.length < BATTERY_COMPLETA_MAX_BIT;
+  let combinedHminVal, combinedCapped, batteryNota;
+  if(batteryCompleta){
+    const est = combinedHmin(concat);
+    combinedHminVal = est.hmin;
+    combinedCapped = est.detail.lrsCapped;
+    batteryNota = `completa, 6 stimatori (${concat.length} bit, sotto la soglia di ${BATTERY_COMPLETA_MAX_BIT})`;
+  } else {
+    const lr = lrsHmin(concat);
+    combinedCapped = !!lrsHmin.capped;
+    if(lr === null){
+      combinedHminVal = 1;
+      batteryNota = `ridotta, solo LRS (${concat.length} bit) \u2014 LRS non applicabile a questo flusso: nessun vincolo aggiuntivo dal combinato`;
+    } else {
+      combinedHminVal = lr;
+      batteryNota = `ridotta, solo LRS (${concat.length} bit, sopra la soglia di ${BATTERY_COMPLETA_MAX_BIT}): intercetta ripetizioni e dipendenze, non il bias locale`;
+    }
+  }
+  const entropyBitsCombined = combinedHminVal * concat.length;
+  if(combinedHminVal < HMIN_EXCLUDE){
     p2.className='status fail';
-    p2.textContent = `Flusso combinato inutilizzabile: H_min misurata sui bit combinati = ${combinedEst.hmin.toFixed(4)} (< ${HMIN_EXCLUDE}), nonostante le singole sorgenti passino.\n` +
-      (combinedEst.detail.lrsCapped
+    p2.textContent = `Flusso combinato inutilizzabile: H_min misurata sui bit combinati = ${combinedHminVal.toFixed(4)} (< ${HMIN_EXCLUDE}), nonostante le singole sorgenti passino.\nBattery applicata: ${batteryNota}.\n` +
+      (combinedCapped
         ? `Causa: nel flusso combinato esiste una sottostringa ripetuta piu' lunga di ${LRS_W_CAP} bit, che l'LRS segnala con un valore prudente di 0. Le cause tipiche: la stessa sorgente inserita due volte, una registrazione che contiene un ciclo, due file esportati dalla stessa acquisizione, oppure una sorgente cosi' sbilanciata da produrre lunghe sequenze costanti.`
         : `E' il sintomo di una dipendenza fra le sorgenti che il controllo a coppie, essendo solo a due a due, non vede.`) +
       `\nCambia modalita' di combinazione, togli la sorgente sospetta, oppure fornisci sorgenti davvero indipendenti.`;
-    log(`FASE 2 BLOCCATA: H_min del flusso combinato = ${combinedEst.hmin.toFixed(4)}`);
+    log(`FASE 2 BLOCCATA: H_min del flusso combinato = ${combinedHminVal.toFixed(4)} (battery ${batteryCompleta?'completa':'ridotta, solo LRS'})`);
     return;
   }
 
@@ -1531,7 +1563,7 @@ document.getElementById('btnPhase2').addEventListener('click', async ()=>{
   state.sourceHminSum = sumH;
   state.sourceEntropyBits = entropyBitsForLHL;
   p2.className='status ok';
-  p2.textContent = `OK — ${concat.length} bit combinati (modalità: ${combineMode}) da ${active.length} sorgent${active.length>1?'i':'e'}.\nΣ H_min (tasso, informativo) = ${sumH.toFixed(4)}\nH_min misurata SUL FLUSSO COMBINATO = ${combinedEst.hmin.toFixed(4)} → ${entropyBitsCombined.toFixed(1)} bit\nContabilità dalle sorgenti (${budgetNote}) = ${budgetFromSources.toFixed(1)} bit\nEntropia assoluta usata per il bound LHL = ${entropyBitsForLHL.toFixed(1)} bit (vincolo: ${vincolo})\nConteggio degli uni per due vie indipendenti: concordi\n` +
+  p2.textContent = `OK — ${concat.length} bit combinati (modalità: ${combineMode}) da ${active.length} sorgent${active.length>1?'i':'e'}.\nΣ H_min (tasso, informativo) = ${sumH.toFixed(4)}\nH_min misurata SUL FLUSSO COMBINATO = ${combinedHminVal.toFixed(4)} → ${entropyBitsCombined.toFixed(1)} bit  [battery ${batteryNota}]\nContabilità dalle sorgenti (${budgetNote}) = ${budgetFromSources.toFixed(1)} bit\nEntropia assoluta usata per il bound LHL = ${entropyBitsForLHL.toFixed(1)} bit (vincolo: ${vincolo})\nConteggio degli uni per due vie indipendenti: concordi\n` +
     (active.length>1 ? (warnMI.length ? `⚠ WARN correlazione (multi-lag ±8): ${warnMI.join(', ')}` : 'Correlazione multi-lag (±8): nessun warning') : '(sorgente singola)') +
     (excludedForHealth.length ? `\n(${excludedForHealth.join(', ')} esclusa/e per health test RCT/APT fallito)` : '');
   log(`FASE 2 OK: ${concat.length} bit, modalità=${combineMode}, sorgenti=${active.length}`);
@@ -1949,6 +1981,20 @@ async function runSelfTests(){
   const flussoNullo = combineSourceArrays([sorgA, sorgA.slice()], 'xor');
   check('Flusso combinato — lo XOR di due sorgenti identiche ha H_min ≈ 0',
     combinedHmin(sorgA).hmin > HMIN_EXCLUDE && combinedHmin(flussoNullo).hmin < 0.01);
+
+  // [NUOVO] Battery ridotta sopra la soglia: deve comunque intercettare cio' per cui la
+  // rivalidazione del flusso combinato esiste. Verifica che il solo LRS riconosca una
+  // sorgente ripetuta e due sorgenti identiche combinate in XOR, e che NON si allarmi su
+  // un flusso sano (altrimenti la battery ridotta bloccherebbe sessioni legittime).
+  const semeRid = Array.from({length:3000}, ()=> crypto.getRandomValues(new Uint8Array(1))[0] & 1);
+  lrsHmin(semeRid.concat(semeRid.slice()));
+  const ridDuplicata = lrsHmin.capped === true;
+  lrsHmin(combineSourceArrays([semeRid, semeRid.slice()], 'xor'));
+  const ridXorNullo = lrsHmin.capped === true;
+  const lrSano = lrsHmin(semeRid);
+  const ridSano = (lrsHmin.capped === false) && lrSano !== null && lrSano > HMIN_EXCLUDE;
+  check('Battery ridotta (solo LRS) — intercetta sorgente duplicata e XOR nullo, non il flusso sano',
+    ridDuplicata && ridXorNullo && ridSano);
 
   const allPass = results.every(r=>r.pass);
   /* [NUOVO] L'esito ora vincola l'uso. Il README dichiara i vettori NIST "verificati

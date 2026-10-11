@@ -162,7 +162,50 @@ altrettanti percorsi per arrivare a una chiave senza entropia.
   in Node, di piu' nel browser. Il doppio prodotto Toeplitz aggiunge 573 ms su 1 Mbit
   (444 ms il calcolo diretto). E' il prezzo della correttezza su questo punto, e rende il
   Web Worker piu' necessario di prima.
-- SHA-256 del blocco `<script id="core-script">` dopo questa seconda serie: `74559f5fa517d83a26a1aeec23f61f9f9861c6d18315e101383ae619f26348e4`. Sostituisce il valore indicato sopra per la prima serie: e' questo il numero che il pannello Integrita' mostra al caricamento.
+- SHA-256 del blocco `<script id="core-script">` dopo questa seconda serie: `fc53847bedbed84b4a0b17d6a174b90f1867b4d271d0ebc2888ca6e4707267c6`. Sostituisce il valore indicato sopra per la prima serie: e' questo il numero che il pannello Integrita' mostra al caricamento.
+
+### Terza serie — soglia sulla battery di rivalidazione
+
+Compromesso concordato nella PR #8 per il costo introdotto dalla rivalidazione del flusso
+combinato.
+
+**La decisione.** Sotto 1.000.000 di bit il flusso combinato viene rivalidato con la battery
+completa (sei stimatori); sopra la soglia, con il solo LRS. La pagina dichiara a schermo
+quale battery ha applicato, sia nel messaggio di attesa sia nel risultato.
+
+**Perché l'LRS e non un altro.** È lo stimatore che intercetta ciò per cui la rivalidazione
+esiste: ripetizioni e dipendenze fra sorgenti. Misurato: su una sorgente duplicata in
+concatenazione e su due sorgenti identiche combinate in XOR dà 0 con `lrsCapped = true`;
+su un flusso sano dà 0,827 senza cap. Un autotest nuovo verifica tutte e tre le condizioni,
+perché una battery ridotta che si allarmasse sul flusso sano bloccherebbe sessioni legittime.
+
+**La soglia vale SOLO per la rivalidazione del flusso combinato, non per le stime per
+sorgente della Fase 1.** Lì il minimo è quasi sempre dato dalla Compressione, non dall'LRS:
+su quattro flussi misurati, usare il solo LRS alzerebbe H_min del 26-43% (xorshift
+0,7225 → 0,9825; CSPRNG 0,7121 → 0,9835) e quindi gonfierebbe il budget propagato al bound
+LHL. Sarebbe una regressione di sicurezza, non un'ottimizzazione.
+
+**Il budget resta il minimo fra le due contabilità**, quindi una battery ridotta può solo far
+valere di meno il vincolo nuovo: non alza mai il budget sopra quello che la beta6 avrebbe
+dato da sola.
+
+**Costo, misurato in Node.** Il risparmio è modesto, perché l'LRS è esso stesso lo stimatore
+costoso:
+
+```
+            solo LRS    battery completa
+1 Mbit       3.401 ms            6.040 ms
+2 Mbit      11.122 ms           16.626 ms
+4 Mbit      35.582 ms           46.893 ms
+```
+
+Circa il 24% in meno a 4 Mbit, non un ordine di grandezza. Con due sorgenti da 600.000 bit
+(flusso combinato di 1.200.000) la Fase 2 impiega 6,4 s end-to-end. Il rimedio vero al costo
+resta il Web Worker della issue #6.
+
+**Verifica.** Autotest 27 su 27. Suite di comportamento 16 su 16, più 5 controlli nuovi sul
+percorso sopra la soglia (battery ridotta dichiarata, dimensione e soglia nel messaggio,
+Fasi 2-4 complete su un flusso da 1.200.000 bit).
 
 ## v2.0.0-beta6 (2026-10-02) — SHA-256: 585df8012ce93ef78d847003788f954b5405e46ad893b6f77bdd49df73da0f1b
 
